@@ -1,0 +1,32 @@
+.rightActions {
+    display: flex;
+    justify-content: flex-end;
+}
+.rightActions button {
+    margin-top: 10px;
+    margin-left: 5px;
+}
+
+.no-bullets {
+    list-style-type: none;
+    padding: 0; /* Optional: Remove default padding */
+    margin: 0; /* Optional: Remove default margin */
+    display: flex;
+  }
+
+  span.help-inline-error {
+	font-size: 13px;
+    color: red !important;
+}
+
+.h6.text-green {
+    color: #008000 !important;
+}
+
+/* Add space between datatable search and datatable */
+.dt-length, .dt-search {
+    margin-bottom: 10px; /* Adjust the margin as needed */
+}
+div .dt-container div .dt-length select{
+    height: 36px;
+}
