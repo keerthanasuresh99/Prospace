@@ -313,13 +313,14 @@ class AchievementTrackerController extends Controller
     {
         switch ($list_id) {
             case 1:  // FSP PLUS ACHIEVEMENT
-                $totalCount = $this->getClubCount($teamMembers, $startDate, $endDate, 3, $userId);
-                return floor($totalCount / 3);
+                $subTeamMembers = $this->getTeamMembersRecursive($userId); // Fetch team members recursively
+                $totalCount = $this->getFPlusCount($subTeamMembers, $startDate, $endDate, 3, $userId);
+                return $totalCount;
                 break;
 
             case 2: // TEAM FSP PLUS ACHIEVERS COUNT
                 $subTeamMembers = $this->getTeamMembersRecursive($userId); // Fetch team members recursively
-                $count = $this->getUniqueUserCount($startDate, $endDate, $userId, 3, $subTeamMembers, true);
+                $count = $this->getFPlusTeamCount($subTeamMembers, $startDate, $endDate, 3, $userId);
                 return $count;
                 break;
             case 3:     // FAST START ACHIEVEMENT
@@ -332,13 +333,13 @@ class AchievementTrackerController extends Controller
                 return $tcount;
                 break;
             case 5:   //SPONSORING CLUB LEADER
-                $team_count = $this->getClubCount($teamMembers, $startDate, $endDate, 9, $userId);
-                $club_count = floor($team_count / 3);
-                return floor($club_count / 3);
+                $subTeamMembers = $this->getTeamMembersRecursive($userId); // Fetch team members recursively
+                $team_count = $this->getUniqueUserCount($startDate, $endDate, $userId, 9, $subTeamMembers);
+                return floor($team_count / 3);
                 break;
             case 6:  //TEAM SPONSORING CLUB LEADERS COUNT
                 $subTeamMembers = $this->getTeamMembersRecursive($userId); // Fetch team members recursively
-                $team_count = $this->getUniqueUserCount($startDate, $endDate, $userId, 9, $subTeamMembers, true);
+                $team_count = $this->getClubLeaderCount($startDate, $endDate, $userId, $list_id, $teamMembers);
                 $count =  floor($team_count / 3);
                 return $count;
                 break;
@@ -348,7 +349,7 @@ class AchievementTrackerController extends Controller
                 break;
             case 8:  //TEAM SPONSORING CLUB COUNT
                 $subTeamMembers = $this->getTeamMembersRecursive($userId); // Fetch team members recursively
-                $count = $this->getUniqueUserCount($startDate, $endDate, $userId, 9, $subTeamMembers, true);
+                $count = $this->getUniqueUserCount($startDate, $endDate, $userId, 9, $subTeamMembers);
                 return $count;
 
                 break;
@@ -452,19 +453,67 @@ class AchievementTrackerController extends Controller
     }
 
 
+    public function getFPlusTeamCount($teamMembers, $startDate, $endDate, $achievement_id, $user_id)
+    {
+        $totalCount = 0;
+        $teamMemberCounted = [];
+
+        foreach ($teamMembers as $key => $value) {
+
+            $subTeamMembers = $this->getTeamMembersRecursive($value['user_id']);
+
+            $count = $this->getFPlusCount($subTeamMembers, $startDate, $endDate, $achievement_id, $user_id);
+
+            // Check if the count for the team member is greater than 1 and if it has not been counted yet
+            if ($count > 0 && !in_array($value['user_id'], $teamMemberCounted)) {
+                $totalCount++;
+                $teamMemberCounted[] = $value['user_id']; // Mark the team member as counted
+            }
+        }
+
+        return $totalCount;
+    }
+
+    public function getFPlusCount($teamMembers, $startDate, $endDate, $achievement_id, $user_id)
+    {
+        $count = AchievementTracker::with('achievement')
+            ->select(DB::raw('COUNT(DISTINCT member_id) as user_count'))
+            ->where('achievement_id', $achievement_id)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->whereIn('member_id', $teamMembers)
+            ->get()->pluck('user_count')->sum();
+
+        $totalCount = floor($count / 3);
+
+        return $totalCount;
+    }
+
+
+    public function getClubLeaderCount($startDate, $endDate, $userId, $list_id, $teamMembers)
+    {
+        $totalCount = 0;
+
+        foreach ($teamMembers as $key => $value) {
+
+            $subTeamMembers = $this->getTeamMembersRecursive($value['user_id']);
+
+            $count = $this->getUniqueUserCount($startDate, $endDate, $userId, $list_id, $subTeamMembers);
+
+            $totalCount  = $totalCount + $count;
+        }
+
+        return $totalCount;
+    }
+
 
     public function getClubCount($teamMembers, $startDate, $endDate, $achievement_id, $user_id)
     {
         $totalCountQuery = AchievementTracker::with('achievement')
             ->select(DB::raw('COUNT(user_id) as user_count'))
             ->where('achievement_id', $achievement_id)
-            ->whereBetween('date', [$startDate, $endDate]);
+            ->whereBetween('date', [$startDate, $endDate])
+            ->where('user_id', $user_id);
 
-        if ($achievement_id == 3) {
-            $totalCountQuery->where('member_id', $user_id);
-        } else {
-            $totalCountQuery->where('user_id', $user_id);
-        }
 
         $totalCount = $totalCountQuery->get()->pluck('user_count')->sum();
 
@@ -516,39 +565,15 @@ class AchievementTrackerController extends Controller
     }
 
 
-    public function getUniqueUserCount($startDate, $endDate, $userId, $list_id, $teamMembers, $isTeam = false)
+    public function getUniqueUserCount($startDate, $endDate, $userId, $list_id, $teamMembers)
     {
 
-        $query = AchievementTracker::with('achievement')
-            ->select('achievement_id', DB::raw('COUNT(*) as team_count'));
-
-        // Apply date and achievement_id filters
-        $query->where('achievement_id', $list_id)
-            ->whereBetween('date', [$startDate, $endDate]);
-
-        // Apply conditional where clauses based on isTeam and list_id
-        if ($isTeam) {
-            if ($list_id == 3) {
-                $query->whereIn('member_id', $teamMembers);
-            } else {
-                $query->whereIn('user_id', $teamMembers);
-            }
-        } else {
-            if ($list_id == 3) {
-                $query->where('member_id', $userId);
-            } else {
-                $query->where('user_id', $userId);
-            }
-        }
-
-        // Apply conditional group by clause based on list_id
-        if ($list_id == 3) {
-            $query->groupBy('achievement_id', 'member_id');
-        } else {
-            $query->groupBy('achievement_id', 'user_id');
-        }
-
-        $totalCount = $query->get();
+        $totalCount = AchievementTracker::with('achievement')
+            ->select('achievement_id', DB::raw('COUNT(*) as team_count'))
+            ->where('achievement_id', $list_id)
+            ->whereBetween('date', [$startDate, $endDate])
+            ->whereIn('user_id', $teamMembers)
+            ->groupBy('achievement_id', 'user_id')->get();
 
         $count = 0;
         foreach ($totalCount as $value) {
@@ -559,6 +584,50 @@ class AchievementTrackerController extends Controller
 
         return $count;
     }
+
+    // public function getUniqueUserCount($startDate, $endDate, $userId, $list_id, $teamMembers, $isTeam = false)
+    // {
+
+    //     $query = AchievementTracker::with('achievement')
+    //         ->select('achievement_id', DB::raw('COUNT(*) as team_count'));
+
+    //     // Apply date and achievement_id filters
+    //     $query->where('achievement_id', $list_id)
+    //         ->whereBetween('date', [$startDate, $endDate]);
+
+    //     // Apply conditional where clauses based on isTeam and list_id
+    //     if ($isTeam) {
+    //         if ($list_id == 3) {
+    //             $query->whereIn('member_id', $teamMembers);
+    //         } else {
+    //             $query->whereIn('user_id', $teamMembers);
+    //         }
+    //     } else {
+    //         if ($list_id == 3) {
+    //             $query->where('member_id', $userId);
+    //         } else {
+    //             $query->where('user_id', $userId);
+    //         }
+    //     }
+
+    //     // Apply conditional group by clause based on list_id
+    //     if ($list_id == 3) {
+    //         $query->groupBy('achievement_id', 'member_id');
+    //     } else {
+    //         $query->groupBy('achievement_id', 'user_id');
+    //     }
+
+    //     $totalCount = $query->get();
+
+    //     $count = 0;
+    //     foreach ($totalCount as $value) {
+    //         $club_count = floor($value->team_count / 3);
+    //         $club_count = min($club_count, 1);
+    //         $count += $club_count;
+    //     }
+
+    //     return $count;
+    // }
 
 
     private function getTeamtarget($team_members, $userId, $achievement_id, $target_date)
@@ -637,13 +706,15 @@ class AchievementTrackerController extends Controller
             $teamMembers = AchievementTracker::where('achievement_id', $achievement_id);
 
             $members = collect($members);
-            $members->push($request->user_id);
+            $members->push(['user_id' => $request->user_id]);
 
-            if ($achievement_id == 3) {
+
+            if ($achievement_id == 3 && !in_array($request->achievement_id, [1, 2])) {
                 $teamMembers->whereIn('member_id', $members->toArray());
             } else {
                 $teamMembers->whereIn('user_id', $members->toArray());
             }
+
 
             if ($request->from_date && $request->to_date) {
 
@@ -684,12 +755,14 @@ class AchievementTrackerController extends Controller
                 $teamMembers = $teamMembers->flatten();
             }
 
-            if ($achievement_id == 3) {
+
+            if ($achievement_id == 3 && !in_array($request->achievement_id, [1, 2])) {
                 $distinctTeamMembers = $teamMembers->unique('member_id');
             } else {
                 $distinctTeamMembers = $teamMembers->unique('user_id');
             }
 
+            //dd($distinctTeamMembers);
 
             $achievement = AchievementList::where('id', $achievement_id)->first();
 
@@ -697,10 +770,30 @@ class AchievementTrackerController extends Controller
             $club_count = 0;
 
 
+            // if ($request->achievement_id == 1 || $request->achievement_id == 2) {
+
+            //     $existingMemberIds = $distinctTeamMembers->pluck('member_id')->toArray();
+
+            //     $nonTrackedMembers = $members->filter(function ($member) use ($existingMemberIds) {
+            //         return !in_array($member, $existingMemberIds);
+            //     });
+
+            //     foreach ($nonTrackedMembers as $member) {
+
+            //         if (is_array($member) && isset($member['user_id'])) {
+            //             $distinctTeamMembers[] = ['member_id' => $member['user_id']];
+            //         }
+            //     }
+
+
+            //     $distinctTeamMembers = $distinctTeamMembers->unique('member_id')->values();
+            // }
+
+            //dd($distinctTeamMembers);
 
             foreach ($distinctTeamMembers as $key => $value) {
 
-                if ($achievement_id == 3) {
+                if ($achievement_id == 3 && !in_array($request->achievement_id, [1, 2])) {
                     $user = User::where('id', $value['member_id'])->first();
                     $userId = $value['member_id'];
                 } else {
@@ -708,10 +801,11 @@ class AchievementTrackerController extends Controller
                     $userId = $value['user_id'];
                 }
 
-                $avatar = ($user->avatar) ? asset('http://tathastudd.com/public/storage/avatar/' . $user->avatar) : null;
+                $avatar = ($user && $user->avatar)  ? asset('http://tathastudd.com/public/storage/avatar/' . $user->avatar) : null;
                 $team_members = $this->getTeamMembers($userId);
                 $currentDate = Carbon::now()->toDateString();
 
+                $sub_team = $this->getTeamMembersRecursive($value['member_id']);
 
 
                 $achievementIdsMapping = [
@@ -741,25 +835,6 @@ class AchievementTrackerController extends Controller
                 $team_current_month_target = $this->getTeamtarget($team_members, $userId, $achievement_id, Carbon::now()->endOfMonth()->toDateString());
 
 
-                // if (in_array($request->achievement_id, [13, 12, 11])) {
-
-                //     $achievements = AchievementTracker::where('user_id', $userId)
-                //         ->where('achievement_id', $achievement_id)
-                //         ->with('member')
-                //         ->whereBetween('date', [$currentMonthStart, $currentMonthEnd])
-                //         ->get()
-                //         ->each(function ($achievement) {
-                //             $achievement->setRelation('user', $achievement->member);
-                //         });
-                // } else {
-
-                //     $achievements = AchievementTracker::where('user_id', $userId)
-                //         ->where('achievement_id', $achievement_id)
-                //         ->whereBetween('date', [$currentMonthStart, $currentMonthEnd])
-                //         ->with('user')->get();
-                // }
-
-
                 if (in_array($request->achievement_id, [13, 12, 11])) {
                     $achievements = AchievementTracker::where('user_id', $userId)
                         ->where('achievement_id', $achievement_id)
@@ -777,8 +852,15 @@ class AchievementTrackerController extends Controller
                         });
                 } else {
 
-                    if ($achievement_id == 3) {
+
+                    if ($achievement_id == 3 && !in_array($request->achievement_id, [1, 2])) {
                         $achievements = AchievementTracker::where('member_id', $userId)
+                            ->where('achievement_id', $achievement_id);
+                    } else if (in_array($request->achievement_id, [1, 2])) {
+
+                        $sub_team_fsp = $this->getTeamMembersRecursive($value['user_id']);
+
+                        $achievements = AchievementTracker::whereIn('member_id', $sub_team_fsp)
                             ->where('achievement_id', $achievement_id);
                     } else {
                         $achievements = AchievementTracker::where('user_id', $userId)
@@ -796,16 +878,19 @@ class AchievementTrackerController extends Controller
 
                 $current_month_count = $this->getAchievement($achievement_id, $userId, $currentMonthStart, $currentMonthEnd, $team_members);
 
-                $club_count = ($request->achievement_id == 7 || $request->achievement_id == 8 || $request->achievement_id == 6 || $request->achievement_id == 5 || $request->achievement_id == 1 ||  $request->achievement_id == 2) ? intdiv($current_month_count, 3) : null;
+                $club_count = ($request->achievement_id == 7 || $request->achievement_id == 8 || $request->achievement_id == 6 || $request->achievement_id == 5) ? intdiv($current_month_count, 3) : null;
                 $club_leader_count = ($request->achievement_id == 5 || $request->achievement_id == 6) ? intdiv($club_count, 3) : null;
 
+                $sub_team_current_month = ($request->achievement_id == 1 || $request->achievement_id == 2)  ? $this->getAchievement(1, $userId, $currentMonthStart, $currentMonthEnd, $sub_team) : null;
 
                 // Condition to add the user's data to the array
                 $shouldAdd = false;
-                if ($request->achievement_id == 7 || $request->achievement_id == 8 || $request->achievement_id == 1 ||  $request->achievement_id == 2) {
+                if ($request->achievement_id == 7 || $request->achievement_id == 8) {
                     $shouldAdd = $club_count > 0;
                 } elseif ($request->achievement_id == 5 || $request->achievement_id == 6) {
                     $shouldAdd = $club_leader_count > 0;
+                } else if ($request->achievement_id == 1 ||  $request->achievement_id == 2) {
+                    $shouldAdd = $sub_team_current_month > 0;
                 } else {
                     $shouldAdd = true;
                 }
@@ -829,9 +914,12 @@ class AchievementTrackerController extends Controller
                         $tracker_achievement_id = $tracker_id_mapping[$request->achievement_id];
                     }
 
+                    // if(!$value['id']){
+                    //     $id = AchievementTracker::where('member_id',$value['member_id'])
+                    // }
 
                     $data[] = [
-                        'id' => $value['id'],
+                        'id' => $value['id'] ?? null,
                         'achievement' => $achievement->title,
                         'user_id' => $userId,
                         'first_name' => $user->first_name,
@@ -1079,8 +1167,8 @@ class AchievementTrackerController extends Controller
             }
 
             return $this->simpleReturn('error', 'No Records found', 404);
-        } catch (\Throwable $th) {
-            return $this->simpleReturn('error', $th->getMessage(), 500);
+        } catch (Exception $e) {
+            return $this->simpleReturn('error', $e->getMessage(), 500);
         }
     }
 
@@ -1172,3 +1260,4 @@ class AchievementTrackerController extends Controller
         return $this->simpleReturn('error', 'No Records found', 404);
     }
 }
+
